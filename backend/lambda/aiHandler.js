@@ -1,24 +1,14 @@
 const { BedrockRuntimeClient, ConverseCommand } = require('@aws-sdk/client-bedrock-runtime');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
-const { randomUUID } = require('crypto');
+const { DynamoDBDocumentClient, GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
 const { authenticateRequest } = require('./authz');
-const {
-    reserveCreditsForUsage,
-    creditAdjustment,
-    estimateMaxCreditsForRequest,
-    calculateCreditsToDebit,
-} = require('./creditService');
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 const MODEL_ID = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
 const SUMMARIES_TABLE = process.env.SUMMARIES_TABLE;
-const AI_USAGE_TABLE = process.env.AI_USAGE_TABLE;
 const CACHE_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
-const USAGE_TTL_SECONDS = 32 * 24 * 60 * 60; // 32 days
-const AI_QUERY_DAILY_LIMIT = Number(process.env.AI_QUERY_DAILY_LIMIT || 200);
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 
 // ========================================
@@ -35,7 +25,7 @@ module.exports.explain = async (event) => {
         const { filePath, fileHash, metrics, dependencies, dependents, fileContent, detailed, relationship } = body;
 
         if (relationship) {
-            return handleRelationshipExplain(relationship, auth.user.email);
+            return handleRelationshipExplain(relationship);
         }
 
         if (!filePath || !fileHash) {
@@ -63,57 +53,9 @@ module.exports.explain = async (event) => {
         // Keep synchronous requests bounded to reduce API timeout risk.
         const maxTokens = detailed ? 2200 : 700;
 
-        const usageId = randomUUID();
-        const reservedCredits = estimateMaxCreditsForRequest(prompt.length, maxTokens);
-        try {
-            await reserveCreditsForUsage({
-                userId: auth.user.email,
-                credits: reservedCredits,
-                source: 'ai_usage_reserve',
-                sourceId: `reserve:${usageId}`,
-                metadata: { filePath, detailed: !!detailed, maxTokens },
-            });
-        } catch (billingErr) {
-            if (billingErr.name === 'ConditionalCheckFailedException' || billingErr.name === 'TransactionCanceledException') {
-                return response(402, { error: 'Insufficient credits. Please buy more credits to continue.' });
-            }
-            throw billingErr;
-        }
-
-        let aiResponse;
-        try {
-            // Call Bedrock via Converse API
-            aiResponse = await invokeModel(prompt, maxTokens);
-        } catch (invokeErr) {
-            await creditAdjustment({
-                userId: auth.user.email,
-                credits: reservedCredits,
-                source: 'ai_usage_reserve_release',
-                sourceId: `reserve_release:${usageId}`,
-                metadata: { reason: 'invoke_failed', message: invokeErr.message },
-            });
-            throw invokeErr;
-        }
+        // Call Bedrock via Converse API
+        const aiResponse = await invokeModel(prompt, maxTokens);
         const summary = aiResponse.text.trim();
-
-        const totalActual = calculateCreditsToDebit(aiResponse.usage.inputTokens, aiResponse.usage.outputTokens);
-        if (totalActual < reservedCredits) {
-            await creditAdjustment({
-                userId: auth.user.email,
-                credits: reservedCredits - totalActual,
-                source: 'ai_usage_reconciliation_credit',
-                sourceId: `reserve_reconcile:${usageId}`,
-                metadata: { reservedCredits, totalActual },
-            });
-        } else if (totalActual > reservedCredits) {
-            await reserveCreditsForUsage({
-                userId: auth.user.email,
-                credits: totalActual - reservedCredits,
-                source: 'ai_usage_reconciliation_debit',
-                sourceId: `reserve_reconcile_extra:${usageId}`,
-                metadata: { reservedCredits, totalActual },
-            });
-        }
 
         // Cache in DynamoDB
         await cacheSummary(cacheKey, filePath, summary);
@@ -151,45 +93,8 @@ module.exports.query = async (event) => {
             return response(400, { error: 'Query is too long. Please keep it under 2000 characters.' });
         }
 
-        const usage = await consumeDailyQuota(auth.user.email);
-        if (!usage.allowed) {
-            return response(429, {
-                error: `Daily AI query limit reached (${AI_QUERY_DAILY_LIMIT}).`,
-                retryAt: usage.retryAt,
-            });
-        }
-
         const prompt = buildQueryPrompt({ query, graphContext, maxResults });
-        const usageId = randomUUID();
-        const reservedCredits = estimateMaxCreditsForRequest(prompt.length, 2048);
-        try {
-            await reserveCreditsForUsage({
-                userId: auth.user.email,
-                credits: reservedCredits,
-                source: 'ai_usage_reserve',
-                sourceId: `reserve:${usageId}`,
-                metadata: { queryLength: query.length, maxTokens: 2048 },
-            });
-        } catch (billingErr) {
-            if (billingErr.name === 'ConditionalCheckFailedException' || billingErr.name === 'TransactionCanceledException') {
-                return response(402, { error: 'Insufficient credits. Please buy more credits to continue.' });
-            }
-            throw billingErr;
-        }
-
-        let aiResponse;
-        try {
-            aiResponse = await invokeModel(prompt, 2048);
-        } catch (invokeErr) {
-            await creditAdjustment({
-                userId: auth.user.email,
-                credits: reservedCredits,
-                source: 'ai_usage_reserve_release',
-                sourceId: `reserve_release:${usageId}`,
-                metadata: { reason: 'invoke_failed', message: invokeErr.message },
-            });
-            throw invokeErr;
-        }
+        const aiResponse = await invokeModel(prompt, 2048);
 
         // Try to parse structured response
         let result;
@@ -202,25 +107,6 @@ module.exports.query = async (event) => {
                 suggestedQuestions: [],
                 confidence: 0.5,
             };
-        }
-
-        const totalActual = calculateCreditsToDebit(aiResponse.usage.inputTokens, aiResponse.usage.outputTokens);
-        if (totalActual < reservedCredits) {
-            await creditAdjustment({
-                userId: auth.user.email,
-                credits: reservedCredits - totalActual,
-                source: 'ai_usage_reconciliation_credit',
-                sourceId: `reserve_reconcile:${usageId}`,
-                metadata: { reservedCredits, totalActual },
-            });
-        } else if (totalActual > reservedCredits) {
-            await reserveCreditsForUsage({
-                userId: auth.user.email,
-                credits: totalActual - reservedCredits,
-                source: 'ai_usage_reconciliation_debit',
-                sourceId: `reserve_reconcile_extra:${usageId}`,
-                metadata: { reservedCredits, totalActual },
-            });
         }
 
         console.log(`Processed query: "${query.substring(0, 50)}..."`);
@@ -328,7 +214,7 @@ Provide concrete, actionable suggestions for refactoring, performance improvemen
 Write each section with 3-5 detailed sentences. Be specific — reference actual code constructs when possible.`;
 }
 
-async function handleRelationshipExplain(rel, userId) {
+async function handleRelationshipExplain(rel) {
     const { sourceFile, targetFile, cacheKey } = rel;
     if (!sourceFile?.path || !targetFile?.path) {
         return response(400, { error: 'relationship requires sourceFile and targetFile with path.' });
@@ -339,52 +225,9 @@ async function handleRelationshipExplain(rel, userId) {
         return response(200, { summary: cached.summary, cached: true, timestamp: cached.timestamp });
     }
 
-    const sourceId = `relationship_${cacheKey || `${sourceFile.path}:${targetFile.path}`}_${Date.now()}`;
     const prompt = buildRelationshipPrompt(rel);
-    const estimatedCredits = estimateMaxCreditsForRequest(prompt.length, 2048);
-
-    try {
-        await reserveCreditsForUsage({
-            userId,
-            credits: estimatedCredits,
-            source: 'ai_relationship_explain',
-            sourceId,
-            metadata: { sourceFile: sourceFile.path, targetFile: targetFile.path },
-        });
-    } catch (billingErr) {
-        if (billingErr.name === 'ConditionalCheckFailedException' || billingErr.name === 'TransactionCanceledException') {
-            return response(402, { error: 'Insufficient credits. Please buy more credits to continue.' });
-        }
-        throw billingErr;
-    }
-
-    let aiResponse;
-    try {
-        aiResponse = await invokeModel(prompt, 2048);
-    } catch (invokeErr) {
-        const refundCredits = estimatedCredits;
-        await creditAdjustment({
-            userId,
-            credits: refundCredits,
-            source: 'ai_relationship_explain_refund',
-            sourceId: `${sourceId}_refund`,
-            metadata: { reason: 'invoke_failed' },
-        }).catch(() => {});
-        throw invokeErr;
-    }
+    const aiResponse = await invokeModel(prompt, 2048);
     const summary = aiResponse.text.trim();
-
-    const actualCredits = calculateCreditsToDebit(aiResponse.inputTokens || 0, aiResponse.outputTokens || 0);
-    const refund = estimatedCredits - actualCredits;
-    if (refund > 0) {
-        await creditAdjustment({
-            userId,
-            credits: refund,
-            source: 'ai_relationship_explain_reconciliation',
-            sourceId: `${sourceId}_reconciliation`,
-            metadata: { estimated: estimatedCredits, actual: actualCredits },
-        }).catch(() => {});
-    }
 
     await cacheSummary(cacheKey, `${sourceFile.path}|${targetFile.path}`, summary);
 
@@ -531,38 +374,4 @@ function response(statusCode, body) {
         },
         body: JSON.stringify(body),
     };
-}
-
-async function consumeDailyQuota(ownerId) {
-    const day = new Date().toISOString().slice(0, 10);
-    const pk = `${ownerId}#${day}`;
-    const now = Date.now();
-    const tomorrow = new Date(day);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-
-    try {
-        await dynamoClient.send(new UpdateCommand({
-            TableName: AI_USAGE_TABLE,
-            Key: { usageKey: pk },
-            UpdateExpression: 'SET requestCount = if_not_exists(requestCount, :zero) + :one, ownerId = :ownerId, usageDate = :usageDate, updatedAt = :updatedAt, #ttl = :ttl',
-            ConditionExpression: 'attribute_not_exists(requestCount) OR requestCount < :limit',
-            ExpressionAttributeNames: { '#ttl': 'ttl' },
-            ExpressionAttributeValues: {
-                ':zero': 0,
-                ':one': 1,
-                ':limit': AI_QUERY_DAILY_LIMIT,
-                ':ownerId': ownerId,
-                ':usageDate': day,
-                ':updatedAt': new Date().toISOString(),
-                ':ttl': Math.floor((now + USAGE_TTL_SECONDS * 1000) / 1000),
-            },
-        }));
-        return { allowed: true };
-    } catch (err) {
-        if (err.name === 'ConditionalCheckFailedException') {
-            return { allowed: false, retryAt: tomorrow.toISOString() };
-        }
-        console.error('Sync query quota update failed (fail-open):', err);
-        return { allowed: true };
-    }
 }

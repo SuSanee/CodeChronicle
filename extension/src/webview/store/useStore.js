@@ -31,7 +31,6 @@ const useStore = create((set, get) => ({
 
     // Cloud status
     cloudStatus: 'disconnected', // 'connected' | 'disconnected' | 'rate-limited'
-    walletCredits: null,
 
     // Sidebar state
     sidebarOpen: true,
@@ -125,7 +124,6 @@ const useStore = create((set, get) => ({
     setQueryLoading: (loading) => set({ isQueryLoading: loading }),
     setCurrentQuery: (query) => set({ currentQuery: query }),
     setCloudStatus: (status) => set({ cloudStatus: status }),
-    setWalletCredits: (credits) => set({ walletCredits: Number.isFinite(credits) ? credits : null }),
     setSidebarOpen: (open) => set({ sidebarOpen: open }),
     setNodeSummary: (summary) => set({ nodeSummary: summary }),
     setSummaryCached: (cached) => set({ summaryCached: cached }),

@@ -279,24 +279,6 @@ class APIClient {
     }
 
     /**
-     * Fetch current authenticated wallet balance and ledger.
-     * @returns {Promise<{balanceCredits:number,ledger:Array}>}
-     */
-    async getWallet() {
-        if (!this.enabled || !this.endpoint) {
-            throw new Error('Cloud API is not configured.');
-        }
-        // Wallet reads are lightweight; attempt a quick recovery if circuit is open.
-        if (this._circuitOpen) {
-            await this.healthCheck();
-        }
-        if (!this.isAvailable()) {
-            throw new Error('Cloud API is currently unavailable.');
-        }
-        return this.makeRequest('/billing/wallet', { method: 'GET' });
-    }
-
-    /**
      * Make an HTTP request with retry logic and exponential backoff.
      * Opens the circuit-breaker on repeated server errors.
      * @param {string} path

@@ -4,12 +4,6 @@ const { BedrockRuntimeClient, ConverseCommand } = require('@aws-sdk/client-bedro
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { authenticateRequest } = require('./authz');
-const {
-    reserveCreditsForUsage,
-    creditAdjustment,
-    estimateMaxCreditsForRequest,
-    calculateCreditsToDebit,
-} = require('./creditService');
 
 const sqsClient = new SQSClient({});
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
@@ -18,16 +12,13 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const MODEL_ID = process.env.BEDROCK_MODEL_ID || 'us.amazon.nova-lite-v1:0';
 const AI_QUERY_QUEUE_URL = process.env.AI_QUERY_QUEUE_URL;
 const AI_JOBS_TABLE = process.env.AI_JOBS_TABLE;
-const AI_USAGE_TABLE = process.env.AI_USAGE_TABLE;
 const JOB_TTL_SECONDS = 2 * 24 * 60 * 60; // 2 days
-const USAGE_TTL_SECONDS = 32 * 24 * 60 * 60; // 32 days
 const AI_QUERY_MAX_BACKLOG = Number(process.env.AI_QUERY_MAX_BACKLOG || 2000);
 const AI_QUERY_MAX_RESULTS = Number(process.env.AI_QUERY_MAX_RESULTS || 10);
 const AI_QUERY_MAX_FILES = Number(process.env.AI_QUERY_MAX_FILES || 10);
 const AI_QUERY_MAX_PROMPT_CHARS = Number(process.env.AI_QUERY_MAX_PROMPT_CHARS || 120000);
 const AI_QUERY_MAX_CONTENT_PER_FILE = Number(process.env.AI_QUERY_MAX_CONTENT_PER_FILE || 12000);
 const AI_QUERY_MAX_TOKENS = Number(process.env.AI_QUERY_MAX_TOKENS || 1200);
-const AI_QUERY_DAILY_LIMIT = Number(process.env.AI_QUERY_DAILY_LIMIT || 200);
 const AI_ASYNC_ENABLED = process.env.AI_ASYNC_ENABLED !== 'false';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 
@@ -48,19 +39,11 @@ module.exports.submitQueryJob = async (event) => {
         if (!query || typeof query !== 'string') {
             return response(400, { error: 'query is required.' });
         }
-        if (!AI_QUERY_QUEUE_URL || !AI_JOBS_TABLE || !AI_USAGE_TABLE) {
+        if (!AI_QUERY_QUEUE_URL || !AI_JOBS_TABLE) {
             return response(500, { error: 'AI job queue is not configured.' });
         }
         if (query.length > 2000) {
             return response(400, { error: 'Query is too long. Please keep it under 2000 characters.' });
-        }
-
-        const usageCheck = await consumeDailyQuota(ownerId);
-        if (!usageCheck.allowed) {
-            return response(429, {
-                error: `Daily AI query limit reached (${AI_QUERY_DAILY_LIMIT}).`,
-                retryAt: usageCheck.retryAt,
-            });
         }
 
         const backlog = await getQueueBacklog();
@@ -184,35 +167,7 @@ module.exports.processQueryJob = async (event) => {
             }));
 
             const prompt = buildQueryPrompt({ query, graphContext, maxResults });
-            const reservedCredits = estimateMaxCreditsForRequest(prompt.length, AI_QUERY_MAX_TOKENS);
-            try {
-                await reserveCreditsForUsage({
-                    userId: parsed.ownerId,
-                    credits: reservedCredits,
-                    source: 'ai_usage_reserve',
-                    sourceId: `reserve:async:${jobId}`,
-                    metadata: { queryLength: query.length, maxTokens: AI_QUERY_MAX_TOKENS },
-                });
-            } catch (billingErr) {
-                if (billingErr.name === 'ConditionalCheckFailedException' || billingErr.name === 'TransactionCanceledException') {
-                    throw new Error('Insufficient credits. Please buy more credits to continue.');
-                }
-                throw billingErr;
-            }
-
-            let aiResponse;
-            try {
-                aiResponse = await invokeModel(prompt, AI_QUERY_MAX_TOKENS);
-            } catch (invokeErr) {
-                await creditAdjustment({
-                    userId: parsed.ownerId,
-                    credits: reservedCredits,
-                    source: 'ai_usage_reserve_release',
-                    sourceId: `reserve_release:async:${jobId}`,
-                    metadata: { reason: 'invoke_failed', message: invokeErr.message },
-                });
-                throw invokeErr;
-            }
+            const aiResponse = await invokeModel(prompt, AI_QUERY_MAX_TOKENS);
 
             let result;
             try {
@@ -224,25 +179,6 @@ module.exports.processQueryJob = async (event) => {
                     suggestedQuestions: [],
                     confidence: 0.5,
                 };
-            }
-
-            const totalActual = calculateCreditsToDebit(aiResponse.usage.inputTokens, aiResponse.usage.outputTokens);
-            if (totalActual < reservedCredits) {
-                await creditAdjustment({
-                    userId: parsed.ownerId,
-                    credits: reservedCredits - totalActual,
-                    source: 'ai_usage_reconciliation_credit',
-                    sourceId: `reserve_reconcile:async:${jobId}`,
-                    metadata: { reservedCredits, totalActual },
-                });
-            } else if (totalActual > reservedCredits) {
-                await reserveCreditsForUsage({
-                    userId: parsed.ownerId,
-                    credits: totalActual - reservedCredits,
-                    source: 'ai_usage_reconciliation_debit',
-                    sourceId: `reserve_reconcile_extra:async:${jobId}`,
-                    metadata: { reservedCredits, totalActual },
-                });
             }
 
             await dynamoClient.send(new UpdateCommand({
@@ -258,7 +194,7 @@ module.exports.processQueryJob = async (event) => {
             }));
         } catch (err) {
             if (err.name === 'ConditionalCheckFailedException') {
-                // Already processed or no longer queued; avoid duplicate charging on SQS retries.
+                // Already processed or no longer queued; avoid duplicate processing on SQS retries.
                 console.warn(`Skipping duplicate/non-queued job ${jobId}.`);
                 continue;
             }
@@ -369,43 +305,6 @@ async function getQueueBacklog() {
         console.warn('Failed to read queue backlog:', err.message);
         // Fail-open to avoid accidental outage if SQS attribute call fails.
         return 0;
-    }
-}
-
-async function consumeDailyQuota(ownerId) {
-    const day = new Date().toISOString().slice(0, 10);
-    const pk = `${ownerId}#${day}`;
-    const now = Date.now();
-    const tomorrow = new Date(day);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-
-    try {
-        await dynamoClient.send(new UpdateCommand({
-            TableName: AI_USAGE_TABLE,
-            Key: { usageKey: pk },
-            UpdateExpression: 'SET requestCount = if_not_exists(requestCount, :zero) + :one, ownerId = :ownerId, usageDate = :usageDate, updatedAt = :updatedAt, #ttl = :ttl',
-            ConditionExpression: 'attribute_not_exists(requestCount) OR requestCount < :limit',
-            ExpressionAttributeNames: {
-                '#ttl': 'ttl',
-            },
-            ExpressionAttributeValues: {
-                ':zero': 0,
-                ':one': 1,
-                ':limit': AI_QUERY_DAILY_LIMIT,
-                ':ownerId': ownerId,
-                ':usageDate': day,
-                ':updatedAt': new Date().toISOString(),
-                ':ttl': Math.floor((now + USAGE_TTL_SECONDS * 1000) / 1000),
-            },
-        }));
-        return { allowed: true };
-    } catch (err) {
-        if (err.name === 'ConditionalCheckFailedException') {
-            return { allowed: false, retryAt: tomorrow.toISOString() };
-        }
-        console.error('Usage quota update failed (fail-open):', err);
-        // Fail-open for transient/internal issues to avoid blocking all AI traffic.
-        return { allowed: true };
     }
 }
 

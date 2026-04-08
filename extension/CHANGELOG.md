@@ -2,112 +2,15 @@
 
 All notable changes to the "CodeChronicle" extension will be documented in this file.
 
-## [0.1.8] - 2026-04-07
-
-### Changed
-
-- Billing ecosystem update:
-  - Website billing now supports coupon redemption from user dashboard.
-  - Admin billing supports coupon code creation and redeemed-credit monitoring.
-  - Admin summary now includes total `Credits Redeemed` alongside sold/consumed/reversed metrics.
-
-## [0.1.7] - 2026-04-07
-
-### Added
-
-- Buy Credits action in extension status bar with smart website redirect:
-  - Authenticated users -> `/billing`
-  - Unauthenticated users -> `/login` then billing
-- Dedicated query in-flight guard to prevent concurrent duplicate AI queries.
-- Summary in-flight guard to prevent duplicate summary calls per node.
-
-### Changed
-
-- Query panel UX: disables submit/input while a query is running and adds clearer waiting state.
-- Credit and cloud-fallback handling improved for clearer user-facing messages.
-- Error display scrubbed in key command paths to avoid leaking raw backend/runtime details.
-
-### Fixed
-
-- Duplicate query toasts on cloud fallback/error.
-- Relationship explain path now consistently meters credits.
-- Risk request fallback now clears loading state reliably.
-- Removed status-bar attribution badges from extension webview.
-
-## [0.1.6] - 2026-03-07
-
-### Changed
-
-- Maintenance release: API client and backend configuration updates
-
-## [0.1.5] - 2026-03-07
-
-### Changed
-
-- Minor UI patch
-
-## [0.1.4] - 2026-03-06
-
-### Fixed
-
-- **Responsive UI for small screens**: Full responsiveness across 13" MacBooks, narrow laptops, and smaller displays
-  - Sidebar and FileDetailsPanel use flexible widths (`clamp`) instead of fixed 340px
-  - Tab bar, toolbar, status bar, and modals adapt to viewport size
-  - Blast Radius, Risk Map, and Query panels use responsive grids and wrapping
-  - Graph search bar, tooltips, toasts, and AI progress indicator scale correctly
-  - DetailedSummaryModal filename truncates on overflow; toast messages wrap long text
-  - GraphSearchBar match badge truncates on very narrow screens
-  - No horizontal scroll or cut-off content on any supported device size
-
-## [0.1.3] - 2026-03-06
-
-### Added
-
-- "Made with Kiro" and "Powered by AWS" attribution badges in the status bar
-
-### Changed
-
-- Updated Getting Started documentation with correct usage flow
-
-## [0.1.2] - 2026-03-06
-
-### Changed
-
-- Refined overall UI for improved consistency and visual clarity
-- Replaced emoji icons with scalable SVG icons across all components
-- Improved zoom controls with smoother animations in the graph dashboard
-- Cleaned up risk indicator styling in panels and modals
-
-### Fixed
-
-- Reverted and stabilized color design after regression in 0.1.1
-- Minor bug fixes in graph rendering and panel interactions
-
-## [0.1.1] - 2026-03-05
-
-### Added
-
-- Activity Bar sidebar with welcome panel and quick-action buttons
-- One-click access to Scan Workspace, Open Graph View, Ask AI, Predict Blast Radius, and Refresh Analysis from the sidebar
-
-### Changed
-
-- Extension icon and toolbar now display the CodeChronicle logo
-- Updated publisher metadata
-
 ## [0.1.0] - 2026-03-05
 
 ### Added
 
-- Interactive dependency graph visualization powered by Cytoscape.js
-- Multi-language file scanning (JS, TS, Python, Java, Go, Rust, C/C++, and more)
-- AI-powered file summaries via Amazon Bedrock
-- Blast radius analysis to predict impact of file changes
-- Natural language codebase queries
-- Structural and AI risk assessment with exportable reports
-- Real-time file watching with incremental graph updates
-- Graph search and filtering
-- Detailed 7-section AI analysis modal
-- Dependency relationship analysis between connected files
-- Local offline fallback when cloud AI is unavailable
-- Dark glassmorphism UI with neon accents
+- AI-powered VS Code extension that helps developers understand and navigate unfamiliar codebases directly within their IDE
+- Plain-English file summaries powered by Amazon Bedrock
+- Code risk scoring
+- "Ask Your Codebase" Q&A in plain English
+- Serverless AI backend built on AWS Lambda and API Gateway
+- DynamoDB cache to avoid re-analyzing unchanged files
+- Dependency analysis engine using BFS traversal to trace the direct and indirect blast-radius impact of a file change
+- Interactive dependency graph built with React and Cytoscape.js

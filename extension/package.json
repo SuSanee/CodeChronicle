@@ -92,16 +92,6 @@
         "command": "codechronicle.logout",
         "title": "CodeChronicle: Sign Out",
         "icon": "$(sign-out)"
-      },
-      {
-        "command": "codechronicle.buyCredits",
-        "title": "CodeChronicle: Buy Credits",
-        "icon": "$(credit-card)"
-      },
-      {
-        "command": "codechronicle.viewCredits",
-        "title": "CodeChronicle: View Credits",
-        "icon": "$(graph)"
       }
     ],
     "menus": {
@@ -135,11 +125,6 @@
           "type": "string",
           "default": "https://usl085fgve.execute-api.us-east-1.amazonaws.com",
           "description": "AWS API Gateway endpoint URL for cloud AI features."
-        },
-        "codechronicle.websiteUrl": {
-          "type": "string",
-          "default": "https://codechronicle-seven.vercel.app",
-          "description": "CodeChronicle website URL used for credit purchase redirect."
         },
         "codechronicle.awsRegion": {
           "type": "string",

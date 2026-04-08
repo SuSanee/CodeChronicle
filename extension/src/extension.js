@@ -24,8 +24,6 @@ let authService;
 /** @type {AuthWebviewProvider} */
 let authWebviewProvider;
 let authInitialised = false;
-const DEFAULT_WEBSITE_URL = 'https://codechronicle-seven.vercel.app';
-let walletSnapshot = null;
 const SUMMARY_FILE_CONTENT_LIMIT = 25000;
 const DETAILED_FILE_CONTENT_LIMIT = 45000;
 const QUERY_FILE_CONTENT_LIMIT = 15000;
@@ -156,43 +154,6 @@ function activate(context) {
                 vscode.window.showInformationMessage('CodeChronicle: Signed out successfully.');
             }
         }),
-        vscode.commands.registerCommand('codechronicle.buyCredits', async () => {
-            const config = vscode.workspace.getConfiguration('codechronicle');
-            const websiteUrl = (config.get('websiteUrl') || DEFAULT_WEBSITE_URL).replace(/\/+$/, '');
-            const isLoggedIn = !!authService?.isAuthenticated;
-            const email = encodeURIComponent(authService?.user?.email || '');
-            const target = isLoggedIn
-                ? `${websiteUrl}/billing?emailHint=${email}&from=extension`
-                : `${websiteUrl}/login?from=extension&next=%2Fbilling`;
-            await vscode.env.openExternal(vscode.Uri.parse(target));
-            vscode.window.showInformationMessage(
-                `CodeChronicle: Opened ${isLoggedIn ? 'billing' : 'login'} page in your browser.`
-            );
-        }),
-        vscode.commands.registerCommand('codechronicle.viewCredits', async () => {
-            if (!requireAuth()) return;
-            if (!state.apiClient) return;
-            try {
-                const wallet = await state.apiClient.getWallet();
-                walletSnapshot = wallet;
-                const items = (wallet.ledger || []).slice(0, 8).map((entry) => ({
-                    label: `${entry.type === 'debit' ? '-' : '+'}${entry.credits} credits`,
-                    description: entry.source,
-                    detail: new Date(entry.createdAt).toLocaleString(),
-                }));
-                if (!items.length) {
-                    items.push({ label: 'No credit activity yet', description: '', detail: '' });
-                }
-                await vscode.window.showQuickPick(items, {
-                    title: `CodeChronicle Credits: ${wallet.balanceCredits}`,
-                    placeHolder: 'Recent credit activity (from backend ledger)',
-                });
-                updateStatusBar('ready');
-            } catch (err) {
-                console.error('CodeChronicle: viewCredits error:', err);
-                vscode.window.showErrorMessage('CodeChronicle: Failed to load credits. Please check your connection and try again.');
-            }
-        }),
     );
 
     // ─── Auth State Change Listener ──────────────────────
@@ -209,7 +170,6 @@ function activate(context) {
             }
             if (state.apiClient) {
                 state.apiClient.setAuthToken(authService?.token || null);
-                refreshWalletSnapshot().catch(() => {});
             }
             vscode.window.showInformationMessage(
                 `CodeChronicle: Welcome${event.user?.name ? ', ' + event.user.name : ''}!`
@@ -227,7 +187,6 @@ function activate(context) {
             if (state.apiClient) {
                 state.apiClient.setAuthToken(null);
             }
-            walletSnapshot = null;
         }
     });
 
@@ -432,14 +391,6 @@ async function showGraph(context) {
                             type: 'init',
                             graph: state.graph,
                         });
-                        if (walletSnapshot && Number.isFinite(walletSnapshot.balanceCredits)) {
-                            panel.webview.postMessage({
-                                type: 'wallet',
-                                balanceCredits: walletSnapshot.balanceCredits,
-                            });
-                        } else {
-                            refreshWalletSnapshot(panel).catch(() => {});
-                        }
                         // Check cloud AI status on startup
                         state.apiClient.healthCheck().then((status) => {
                             panel.webview.postMessage({ type: 'cloudStatus', status });
@@ -481,13 +432,6 @@ async function showGraph(context) {
 
                     case 'requestRelationship':
                         handleRelationshipRequest(panel, message.sourceId, message.targetId, message.direction);
-                        break;
-
-                    case 'viewCredits':
-                        await vscode.commands.executeCommand('codechronicle.viewCredits');
-                        break;
-                    case 'buyCredits':
-                        await vscode.commands.executeCommand('codechronicle.buyCredits');
                         break;
                 }
             } catch (err) {
@@ -592,7 +536,6 @@ async function handleNodeClick(panel, nodeId) {
             localFallback: true,
         });
     }
-    refreshWalletSnapshot(panel).catch(() => {});
 }
 
 async function handleBlastRadius(panel, nodeId) {
@@ -683,7 +626,6 @@ async function handleQuery(panel, query) {
         }
     } finally {
         _queryInFlight = false;
-        refreshWalletSnapshot(panel).catch(() => {});
     }
 }
 
@@ -846,8 +788,6 @@ async function handleRiskRequest(panel, nodeId) {
             if (shouldMarkCloudDisconnected(err)) {
                 panel.webview.postMessage({ type: 'cloudStatus', status: 'disconnected' });
             }
-        } finally {
-            refreshWalletSnapshot(panel).catch(() => {});
         }
     }
 }
@@ -919,8 +859,6 @@ async function handleDetailedSummaryRequest(panel, nodeId) {
         if (shouldMarkCloudDisconnected(err)) {
             panel.webview.postMessage({ type: 'cloudStatus', status: 'disconnected' });
         }
-    } finally {
-        refreshWalletSnapshot(panel).catch(() => {});
     }
 }
 
@@ -1001,8 +939,6 @@ async function handleRelationshipRequest(panel, sourceId, targetId, direction) {
         if (shouldMarkCloudDisconnected(err)) {
             panel.webview.postMessage({ type: 'cloudStatus', status: 'disconnected' });
         }
-    } finally {
-        refreshWalletSnapshot(panel).catch(() => {});
     }
 }
 
@@ -1197,9 +1133,8 @@ function updateStatusBar(status) {
         case 'ready': {
             const nodeCount = state.graph ? Object.keys(state.graph.nodes).length : 0;
             const userName = authService?.user?.name || authService?.user?.email || '';
-            const credits = walletSnapshot?.balanceCredits;
-            statusBarItem.text = `$(type-hierarchy) CodeChronicle${nodeCount > 0 ? `: ${nodeCount} files` : ''}${Number.isFinite(credits) ? ` | ${credits} cr` : ''}`;
-            statusBarItem.tooltip = `Click to open CodeChronicle graph${userName ? '\nSigned in as ' + userName : ''}${Number.isFinite(credits) ? `\nCredits: ${credits}` : '\nCredits: loading...'}`;
+            statusBarItem.text = `$(type-hierarchy) CodeChronicle${nodeCount > 0 ? `: ${nodeCount} files` : ''}`;
+            statusBarItem.tooltip = `Click to open CodeChronicle graph${userName ? '\nSigned in as ' + userName : ''}`;
             statusBarItem.command = 'codechronicle.showGraph';
             statusBarItem.backgroundColor = undefined;
             break;
@@ -1286,7 +1221,6 @@ class SidebarViewProvider {
 
         const isAuth = this._authService?.isAuthenticated;
         const userName = this._authService?.user?.name || this._authService?.user?.email || '';
-        const userEmail = this._authService?.user?.email || '';
 
         const nonce = getNonce();
 
@@ -1394,7 +1328,6 @@ class SidebarViewProvider {
     background: none; border: none; color: var(--vscode-foreground);
   }
   .logout-link:hover { opacity: 0.85; text-decoration: underline; }
-  .meta { font-size: 11px; opacity: 0.6; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -1405,9 +1338,6 @@ class SidebarViewProvider {
 
   <button class="btn" id="scan-btn" type="button">Scan Workspace</button>
   <button class="btn btn-secondary" id="graph-btn" type="button">Open Graph View</button>
-  <button class="btn btn-secondary" id="buy-credits-btn" type="button">Buy Credits</button>
-  <button class="btn btn-secondary" id="view-credits-btn" type="button">View Credits</button>
-  <p class="meta">Use the same account (${userEmail}) on the website.</p>
 
   <div class="divider"></div>
 
@@ -1434,8 +1364,6 @@ class SidebarViewProvider {
     document.getElementById('ask-ai-btn').addEventListener('click', () => run('codechronicle.askAI'));
     document.getElementById('blast-btn').addEventListener('click', () => run('codechronicle.predictBlastRadius'));
     document.getElementById('refresh-btn').addEventListener('click', () => run('codechronicle.refreshAnalysis'));
-    document.getElementById('buy-credits-btn').addEventListener('click', () => run('codechronicle.buyCredits'));
-    document.getElementById('view-credits-btn').addEventListener('click', () => run('codechronicle.viewCredits'));
     document.getElementById('logout-btn').addEventListener('click', () => run('codechronicle.logout'));
   </script>
 </body>
@@ -1447,27 +1375,10 @@ function deactivate() {
     if (fileWatcher) fileWatcher.stop();
 }
 
-async function refreshWalletSnapshot(panel) {
-    if (!state.apiClient || !authService?.isAuthenticated) return;
-    try {
-        walletSnapshot = await state.apiClient.getWallet();
-        updateStatusBar('ready');
-        if (panel?.webview) {
-            panel.webview.postMessage({
-                type: 'wallet',
-                balanceCredits: walletSnapshot.balanceCredits,
-            });
-        }
-    } catch (err) {
-        console.warn('CodeChronicle: wallet refresh failed:', err.message);
-    }
-}
-
 function shouldMarkCloudDisconnected(err) {
     const msg = String(err?.message || '').toLowerCase();
     if (!msg) return true;
-    // Keep cloud "connected" for expected business/auth errors.
-    if (msg.includes('402') || msg.includes('insufficient credits') || msg.includes('transaction cancelled')) return false;
+    // Keep cloud "connected" for expected auth errors.
     if (msg.includes('401') || msg.includes('403')) return false;
     // Mark disconnected for connectivity/server issues.
     return (
@@ -1483,13 +1394,6 @@ function getCloudIssueMeta(err) {
     const rawMessage = String(err?.message || '');
     const msg = rawMessage.toLowerCase();
 
-    if (msg.includes('402') || msg.includes('insufficient credits') || msg.includes('transaction cancelled')) {
-        return {
-            code: 'INSUFFICIENT_CREDITS',
-            severity: 'warning',
-            userMessage: 'Insufficient credits. Please purchase more credits from the billing page to continue using Cloud AI.',
-        };
-    }
     if (msg.includes('401') || msg.includes('403')) {
         return {
             code: 'AUTH_REQUIRED',
@@ -1497,7 +1401,7 @@ function getCloudIssueMeta(err) {
             userMessage: 'Your session has expired. Please sign in again to continue.',
         };
     }
-    if (msg.includes('429') || msg.includes('rate') || msg.includes('daily ai query limit')) {
+    if (msg.includes('429') || msg.includes('rate')) {
         return {
             code: 'RATE_LIMITED',
             severity: 'warning',

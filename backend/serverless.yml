@@ -17,7 +17,6 @@ provider:
     RISKS_TABLE: ${self:service}-risks-${self:provider.stage}
     USERS_TABLE: ${self:service}-users-${self:provider.stage}
     AI_JOBS_TABLE: ${self:service}-ai-jobs-${self:provider.stage}
-    AI_USAGE_TABLE: ${self:service}-ai-usage-${self:provider.stage}
     AI_QUERY_QUEUE_URL:
       Ref: AIQueryQueue
     AI_QUERY_MAX_BACKLOG: 2000
@@ -26,42 +25,14 @@ provider:
     AI_QUERY_MAX_PROMPT_CHARS: 120000
     AI_QUERY_MAX_CONTENT_PER_FILE: 12000
     AI_QUERY_MAX_TOKENS: 1200
-    AI_QUERY_DAILY_LIMIT: 200
     AI_ASYNC_ENABLED: true
     ALLOWED_ORIGIN: ${env:ALLOWED_ORIGIN, '*'}
     STAGE: ${self:provider.stage}
     JWT_SECRET: ${env:JWT_SECRET, 'change-me-in-production-use-ssm'}
     JWT_EXPIRY: '7d'
-    WEBSITE_URL: ${env:WEBSITE_URL, ''}
     BREVO_API_KEY: ${env:BREVO_API_KEY, ''}
     BREVO_SENDER_EMAIL: ${env:BREVO_SENDER_EMAIL, 'noreply@codechronicle.dev'}
     BREVO_SENDER_NAME: 'CodeChronicle'
-    CREDITS_WALLET_TABLE: ${self:service}-credits-wallet-${self:provider.stage}
-    CREDITS_LEDGER_TABLE: ${self:service}-credits-ledger-${self:provider.stage}
-    CREDITS_PAYMENTS_TABLE: ${self:service}-credits-payments-${self:provider.stage}
-    CREDITS_METRICS_TABLE: ${self:service}-credits-metrics-${self:provider.stage}
-    CREDITS_COUPONS_TABLE: ${self:service}-credits-coupons-${self:provider.stage}
-    FREE_TRIAL_CREDITS: ${env:FREE_TRIAL_CREDITS, '25'}
-    CREDIT_PRICE_INR: ${env:CREDIT_PRICE_INR, '1'}
-    CREDIT_COST_SAFETY_MULTIPLIER: ${env:CREDIT_COST_SAFETY_MULTIPLIER, '1.2'}
-    INR_PER_USD: ${env:INR_PER_USD, '93'}
-    INPUT_TOKEN_USD_PER_1M: ${env:INPUT_TOKEN_USD_PER_1M, '2.5'}
-    OUTPUT_TOKEN_USD_PER_1M: ${env:OUTPUT_TOKEN_USD_PER_1M, '12.5'}
-    RAZORPAY_NET_FACTOR: ${env:RAZORPAY_NET_FACTOR, '0.9764'}
-    RAZORPAY_KEY_ID: ${env:RAZORPAY_KEY_ID, ''}
-    RAZORPAY_KEY_SECRET: ${env:RAZORPAY_KEY_SECRET, ''}
-    RAZORPAY_WEBHOOK_SECRET: ${env:RAZORPAY_WEBHOOK_SECRET, ''}
-    ADMIN_API_KEY: ${env:ADMIN_API_KEY, ''}
-    ADMIN_EMAILS: ${env:ADMIN_EMAILS, ''}
-    STARTER_PLAN_PRICE_INR: ${env:STARTER_PLAN_PRICE_INR, '19'}
-    STARTER_PLAN_CREDITS: ${env:STARTER_PLAN_CREDITS, '99'}
-    STARTER_PLAN_ORIGINAL_PRICE_INR: ${env:STARTER_PLAN_ORIGINAL_PRICE_INR, '29'}
-    GROWTH_PLAN_PRICE_INR: ${env:GROWTH_PLAN_PRICE_INR, '49'}
-    GROWTH_PLAN_CREDITS: ${env:GROWTH_PLAN_CREDITS, '305'}
-    GROWTH_PLAN_ORIGINAL_PRICE_INR: ${env:GROWTH_PLAN_ORIGINAL_PRICE_INR, '79'}
-    PRO_PLAN_PRICE_INR: ${env:PRO_PLAN_PRICE_INR, '99'}
-    PRO_PLAN_CREDITS: ${env:PRO_PLAN_CREDITS, '1050'}
-    PRO_PLAN_ORIGINAL_PRICE_INR: ${env:PRO_PLAN_ORIGINAL_PRICE_INR, '149'}
   iam:
     role:
       statements:
@@ -88,14 +59,6 @@ provider:
             - !GetAtt RisksTable.Arn
             - !GetAtt UsersTable.Arn
             - !GetAtt AIJobsTable.Arn
-            - !GetAtt AIUsageTable.Arn
-            - !GetAtt CreditsWalletTable.Arn
-            - !GetAtt CreditsLedgerTable.Arn
-            - !GetAtt CreditsPaymentsTable.Arn
-            - !GetAtt CreditsMetricsTable.Arn
-            - !GetAtt CreditsCouponsTable.Arn
-            - !Sub '${CreditsLedgerTable.Arn}/index/*'
-            - !Sub '${CreditsPaymentsTable.Arn}/index/*'
         - Effect: Allow
           Action:
             - sqs:SendMessage
@@ -223,78 +186,6 @@ functions:
           method: POST
     timeout: 29
 
-  billingGetPlans:
-    handler: lambda/billingHandler.getPlans
-    events:
-      - httpApi:
-          path: /billing/plans
-          method: GET
-    timeout: 29
-
-  billingGetWallet:
-    handler: lambda/billingHandler.getWallet
-    events:
-      - httpApi:
-          path: /billing/wallet
-          method: GET
-    timeout: 29
-
-  billingCreateOrder:
-    handler: lambda/billingHandler.createOrder
-    events:
-      - httpApi:
-          path: /billing/create-order
-          method: POST
-    timeout: 29
-
-  billingRazorpayWebhook:
-    handler: lambda/billingHandler.razorpayWebhook
-    events:
-      - httpApi:
-          path: /billing/razorpay/webhook
-          method: POST
-    timeout: 29
-
-  billingAdminSummary:
-    handler: lambda/billingHandler.adminBillingSummary
-    events:
-      - httpApi:
-          path: /billing/admin/summary
-          method: GET
-    timeout: 29
-
-  billingRedeemCoupon:
-    handler: lambda/billingHandler.redeemCoupon
-    events:
-      - httpApi:
-          path: /billing/redeem-coupon
-          method: POST
-    timeout: 29
-
-  billingAdminCreateCoupon:
-    handler: lambda/billingHandler.adminCreateCoupon
-    events:
-      - httpApi:
-          path: /billing/admin/coupons
-          method: POST
-    timeout: 29
-
-  billingAdminListCoupons:
-    handler: lambda/billingHandler.adminListCoupons
-    events:
-      - httpApi:
-          path: /billing/admin/coupons
-          method: GET
-    timeout: 29
-
-  billingAdminUpdateCoupon:
-    handler: lambda/billingHandler.adminUpdateCoupon
-    events:
-      - httpApi:
-          path: /billing/admin/coupons/update
-          method: POST
-    timeout: 29
-
 resources:
   Resources:
     UsersTable:
@@ -364,107 +255,6 @@ resources:
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true
-
-    AIUsageTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.AI_USAGE_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: usageKey
-            AttributeType: S
-        KeySchema:
-          - AttributeName: usageKey
-            KeyType: HASH
-        TimeToLiveSpecification:
-          AttributeName: ttl
-          Enabled: true
-
-    CreditsWalletTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.CREDITS_WALLET_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: userId
-            AttributeType: S
-        KeySchema:
-          - AttributeName: userId
-            KeyType: HASH
-
-    CreditsLedgerTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.CREDITS_LEDGER_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: userId
-            AttributeType: S
-          - AttributeName: entryId
-            AttributeType: S
-          - AttributeName: sourceId
-            AttributeType: S
-        KeySchema:
-          - AttributeName: userId
-            KeyType: HASH
-          - AttributeName: entryId
-            KeyType: RANGE
-        GlobalSecondaryIndexes:
-          - IndexName: SourceIdIndex
-            KeySchema:
-              - AttributeName: sourceId
-                KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-
-    CreditsPaymentsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.CREDITS_PAYMENTS_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: paymentId
-            AttributeType: S
-          - AttributeName: userId
-            AttributeType: S
-          - AttributeName: createdAt
-            AttributeType: S
-        KeySchema:
-          - AttributeName: paymentId
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: UserPaymentsIndex
-            KeySchema:
-              - AttributeName: userId
-                KeyType: HASH
-              - AttributeName: createdAt
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-
-    CreditsMetricsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.CREDITS_METRICS_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: metricKey
-            AttributeType: S
-        KeySchema:
-          - AttributeName: metricKey
-            KeyType: HASH
-
-    CreditsCouponsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.environment.CREDITS_COUPONS_TABLE}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: couponCode
-            AttributeType: S
-        KeySchema:
-          - AttributeName: couponCode
-            KeyType: HASH
 
     AIQueryDLQ:
       Type: AWS::SQS::Queue

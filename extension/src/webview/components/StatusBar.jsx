@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
 import useStore from '../store/useStore';
 
-export default function StatusBar({ onViewCredits, onBuyCredits }) {
-    const { graph, isLoading, loadingMessage, cloudStatus, walletCredits, error, clearError } = useStore();
+export default function StatusBar() {
+    const { graph, isLoading, loadingMessage, cloudStatus, error, clearError } = useStore();
 
     useEffect(() => {
         if (error) {
@@ -65,32 +65,6 @@ export default function StatusBar({ onViewCredits, onBuyCredits }) {
 
                 {/* Right: Cloud status */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                        type="button"
-                        onClick={onViewCredits}
-                        className="status-pill px-2 py-0.5 border text-[11px] font-mono"
-                        style={{
-                            borderColor: 'rgba(0, 240, 255, 0.35)',
-                            color: 'var(--neon-cyan)',
-                            background: 'rgba(0, 240, 255, 0.06)',
-                        }}
-                        title="View wallet credits and recent credit activity"
-                    >
-                        Credits: {Number.isFinite(walletCredits) ? walletCredits : '...'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onBuyCredits}
-                        className="status-pill px-2 py-0.5 border text-[11px] font-mono"
-                        style={{
-                            borderColor: 'rgba(16, 185, 129, 0.35)',
-                            color: 'var(--neon-green)',
-                            background: 'rgba(16, 185, 129, 0.07)',
-                        }}
-                        title="Buy credits on CodeChronicle website"
-                    >
-                        Buy Credits
-                    </button>
                     <div className="flex items-center gap-1.5">
                         <div className="w-2 h-2 rounded-full"
                             style={{

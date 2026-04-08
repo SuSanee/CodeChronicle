@@ -185,18 +185,6 @@
     cursor: not-allowed;
   }
 
-  .status-pill {
-    border-radius: 8px;
-    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
-  }
-
-  .status-pill:hover {
-    border-color: rgba(0, 240, 255, 0.55) !important;
-    background: rgba(0, 240, 255, 0.1) !important;
-    box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
-    transform: translateY(-1px);
-  }
-
   .kbd-hint {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.62rem;

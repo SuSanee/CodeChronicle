@@ -105,7 +105,7 @@ export default function App({ vscode }) {
         setCloudStatus, setError, addQueryToHistory, selectedNode,
         sidebarOpen, blastRadiusMode, setHighlightedNodes, setLoading,
         setLoadingRisk, setLoadingBlast, isLoading, setLoadingSummary,
-        addToast, prevTabIndex, setAiProgress, setWalletCredits,
+        addToast, prevTabIndex, setAiProgress,
     } = useStore();
     const lastFallbackToastRef = useRef({ key: '', at: 0 });
 
@@ -210,10 +210,6 @@ export default function App({ vscode }) {
                     break;
                 }
 
-                case 'wallet':
-                    setWalletCredits(message.balanceCredits);
-                    break;
-
                 case 'error':
                     setError(message.message);
                     setLoading(false);
@@ -254,14 +250,6 @@ export default function App({ vscode }) {
     const handleRefresh = useCallback(() => {
         setLoading(true, 'Rescanning workspace...');
         vscode.postMessage({ type: 'refresh' });
-    }, [vscode]);
-
-    const handleViewCredits = useCallback(() => {
-        vscode.postMessage({ type: 'viewCredits' });
-    }, [vscode]);
-
-    const handleBuyCredits = useCallback(() => {
-        vscode.postMessage({ type: 'buyCredits' });
     }, [vscode]);
 
     const handleRequestRisk = useCallback((nodeId) => {
@@ -511,7 +499,7 @@ export default function App({ vscode }) {
             <RelationshipModal />
 
             {/* Bottom status bar */}
-            <StatusBar onViewCredits={handleViewCredits} onBuyCredits={handleBuyCredits} />
+            <StatusBar />
 
             {/* Toast notifications */}
             <ToastContainer />
